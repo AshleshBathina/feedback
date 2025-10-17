@@ -244,6 +244,49 @@ const StudentFeedbackSubmission = () => {
         [questionIndex]: value
       }
     }));
+
+    // Check if all required questions for this subject are filled
+    checkAndOpenNextSubject(subjectId, questionIndex, value);
+  };
+
+  const checkAndOpenNextSubject = (currentSubjectId, questionIndex, value) => {
+    // Get current subject responses including the new value
+    const currentResponses = {
+      ...responses[currentSubjectId],
+      [questionIndex]: value
+    };
+
+    // Check if all required questions are answered for current subject
+    const allRequiredAnswered = feedbackForm.questions.every((question, idx) => {
+      if (!question.isRequired) return true; // Skip optional questions
+      const answer = currentResponses[idx];
+      return answer !== undefined && answer !== null && answer !== '';
+    });
+
+    if (allRequiredAnswered) {
+      // Find current subject index
+      const currentIndex = subjects.findIndex(s => s._id === currentSubjectId);
+      
+      // If there's a next subject, open it and scroll to it
+      if (currentIndex !== -1 && currentIndex < subjects.length - 1) {
+        const nextSubject = subjects[currentIndex + 1];
+        
+        // Small delay to ensure state updates
+        setTimeout(() => {
+          setActiveSubject(nextSubject._id);
+          
+          // Scroll to next subject
+          const nextElement = document.getElementById(`subject-${nextSubject._id}`);
+          if (nextElement) {
+            nextElement.scrollIntoView({ 
+              behavior: 'smooth', 
+              block: 'start',
+              inline: 'nearest'
+            });
+          }
+        }, 300);
+      }
+    }
   };
 
   const onSubmit = async (data) => {
@@ -841,16 +884,20 @@ const StudentFeedbackSubmission = () => {
                       </div>
 
                       {subjects.map((subject) => (
-                        <div key={subject._id} className="bg-white rounded-xl shadow-lg overflow-hidden">
+                        <div 
+                          key={subject._id} 
+                          id={`subject-${subject._id}`}
+                          className="bg-white rounded-xl shadow-lg overflow-hidden scroll-mt-4"
+                        >
                           {/* Header */}
                           <button
                             type="button"
                             onClick={() => setActiveSubject(prev => prev === subject._id ? null : subject._id)}
                             className="w-full flex justify-between items-center p-4 text-left hover:bg-gray-50 focus:outline-none"
                           >
-                            <div className="flex items-center">
+                            <div className="flex items-center flex-1">
                               <BookOpen className="h-6 w-6 text-purple-600 mr-3" />
-                              <div>
+                              <div className="flex-1">
                                 <div className="flex items-center gap-2">
                                   <h3 className="text-lg font-bold text-gray-900">{subject.subjectName}</h3>
                                   {subject.isLab && (
@@ -858,6 +905,32 @@ const StudentFeedbackSubmission = () => {
                                       🔬 Lab
                                     </span>
                                   )}
+                                  {/* Completion Badge */}
+                                  {(() => {
+                                    const subjectResponses = responses[subject._id] || {};
+                                    const requiredQuestions = feedbackForm.questions.filter(q => q.isRequired);
+                                    const answeredRequired = requiredQuestions.filter((q, idx) => {
+                                      const answer = subjectResponses[idx];
+                                      return answer !== undefined && answer !== null && answer !== '';
+                                    }).length;
+                                    const isComplete = answeredRequired === requiredQuestions.length && requiredQuestions.length > 0;
+                                    
+                                    if (isComplete) {
+                                      return (
+                                        <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-medium flex items-center">
+                                          <CheckCircle className="h-3 w-3 mr-1" />
+                                          Complete
+                                        </span>
+                                      );
+                                    } else if (answeredRequired > 0) {
+                                      return (
+                                        <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded font-medium">
+                                          {answeredRequired}/{requiredQuestions.length}
+                                        </span>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
                                 </div>
                                 {subject.faculty && (
                                   <p className="text-sm text-gray-500">
@@ -867,9 +940,9 @@ const StudentFeedbackSubmission = () => {
                               </div>
                             </div>
                             {activeSubject === subject._id ? (
-                              <ChevronUp className="h-5 w-5 text-gray-500" />
+                              <ChevronUp className="h-5 w-5 text-gray-500 flex-shrink-0" />
                             ) : (
-                              <ChevronDown className="h-5 w-5 text-gray-500" />
+                              <ChevronDown className="h-5 w-5 text-gray-500 flex-shrink-0" />
                             )}
                           </button>
 
