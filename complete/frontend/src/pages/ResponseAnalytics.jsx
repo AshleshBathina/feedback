@@ -7,31 +7,24 @@ import {
   Download,
   Filter,
   Loader2,
-  PieChart as PieChartIcon,
-  List,
   ArrowLeft,
-  GitCompare,
-  ClipboardX
+  ClipboardX,
+  Table as TableIcon
 } from 'lucide-react';
-import FacultyAnalytics from '../components/analytics/FacultyAnalytics';
-import QuestionFacultyAnalytics from '../components/analytics/QuestionFacultyAnalytics';
 import Loader from '../components/Loader';
-import ComparePeriodModal from '../components/Modals/ComparePeriodModal';
+import SubjectComparisonModal from '../components/SubjectComparisonModal';
 
 const ResponseAnalytics = () => {
   const [analytics, setAnalytics] = useState(null);
-  const [comparisonAnalytics, setComparisonAnalytics] = useState(null);
-  const [facultyAnalytics, setFacultyAnalytics] = useState(null);
   const [forms, setForms] = useState([]);
   const [courses, setCourses] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [loadingFacultyAnalytics, setLoadingFacultyAnalytics] = useState(false);
   const [selectedForm, setSelectedForm] = useState('');
   const [activationPeriods, setActivationPeriods] = useState([]);
-  const [showPieCharts, setShowPieCharts] = useState(false);
-  const [showCompareModal, setShowCompareModal] = useState(false);
-  const [textAnswersByQuestion, setTextAnswersByQuestion] = useState({});
+  const [viewMode, setViewMode] = useState('table'); // Default to 'table'
+  const [tableData, setTableData] = useState(null);
+  const [loadingTableData, setLoadingTableData] = useState(false);
   const [filters, setFilters] = useState({
     course: '',
     year: '',
@@ -40,35 +33,11 @@ const ResponseAnalytics = () => {
     subject: '',
     activationPeriod: ''
   });
+  const [comparisonModal, setComparisonModal] = useState({
+    isOpen: false,
+    subject: null
+  });
   const navigate = useNavigate();
-
-  const AnswerBox = ({ data }) => {
-    const [expanded, setExpanded] = useState(false);
-    const charLimit = 200;
-    const isLong = (data?.answer?.length || 0) > charLimit;
-    return (
-      <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-        <div className="flex flex-wrap items-center justify-between text-xs text-gray-600 mb-2 gap-2">
-          <span className="font-mono">{data.rollNumber || '-'}</span>
-          <span>{data.subjectName || '-'}</span>
-          <span>{new Date(data.submittedAt).toLocaleString()}</span>
-        </div>
-        <div className={`text-sm break-words break-all whitespace-pre-wrap relative ${(!isLong || expanded) ? '' : 'max-h-40 overflow-hidden pr-2'}`}>
-          {data.answer}
-          {isLong && !expanded && (
-            <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-gray-50 to-transparent pointer-events-none"></div>
-          )}
-        </div>
-        {isLong && (
-          <div className="mt-2 text-right">
-            <button className="text-royal-600 text-xs font-bold hover:text-royal-900" onClick={() => setExpanded(e => !e)}>
-              {expanded ? 'Collapse' : 'Expand'}
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  };
 
   useEffect(() => {
     fetchInitialData();
@@ -117,34 +86,27 @@ const ResponseAnalytics = () => {
     // Only set loading states when not in comparison mode
     if (!customFilters) {
       setLoading(true);
-      setLoadingFacultyAnalytics(true);
     }
 
     try {
       const params = { formId: selectedForm, ...currentFilters };
-      const [response, facultyResponse] = await Promise.all([
-        responseAPI.getQuestionAnalytics(params),
-        responseAPI.getFacultyQuestionAnalytics(params)
-      ]);
+      const response = await responseAPI.getQuestionAnalytics(params);
 
       if (!response.data || !response.data.formStats) {
         throw new Error('Invalid response data');
       }
 
       console.log('Analytics Response:', response.data);
-      console.log('Faculty Analytics Response:', facultyResponse.data);
 
       // Check if we have any responses at all
       const hasResponses = response.data.formStats.totalResponses > 0;
 
       if (!customFilters) {
         setAnalytics(response.data);
-        setFacultyAnalytics(facultyResponse.data || []);
       }
 
       return {
         analytics: response.data,
-        facultyAnalytics: facultyResponse.data || [],
         hasResponses
       };
     } catch (error) {
@@ -159,100 +121,48 @@ const ResponseAnalytics = () => {
       // Only reset loading states when not in comparison mode
       if (!customFilters) {
         setLoading(false);
-        setLoadingFacultyAnalytics(false);
       }
     }
   };
 
-  const loadTextAnswersForQuestion = async (questionId, facultyId = null, page = 1) => {
-    const baseParams = { formId: selectedForm, ...filters, questionId, page, limit: 50 };
-    if (facultyId) baseParams.facultyId = facultyId;
-    const res = await responseAPI.getTextAnswersByFaculty(baseParams);
-    // Store per question
-    setTextAnswersByQuestion(prev => ({ ...prev, [questionId]: res.data }));
-    return res.data;
-  };
-
-  const exportTextAnswers = async (questionId, facultyId = '') => {
-    const params = { formId: selectedForm, ...filters, questionId };
-    if (facultyId) params.facultyId = facultyId;
-    const blobRes = await responseAPI.exportTextAnswersCSV(params);
-    const url = window.URL.createObjectURL(new Blob([blobRes.data]));
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `text_answers_${questionId}${facultyId ? '_' + facultyId : ''}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
-  };
-
-  const handleCompare = async (selectedPeriods) => {
-    setLoadingFacultyAnalytics(true);
-    setLoading(true);
-
+  const fetchTableData = async () => {
+    if (!selectedForm) return;
+    
+    setLoadingTableData(true);
     try {
-      // Sort periods chronologically
-      const sortedPeriods = [...selectedPeriods].sort((a, b) => new Date(a) - new Date(b));
-
-      // Fetch data for each selected period with specific period filters
-      const periodsData = await Promise.all(
-        sortedPeriods.map(async period => {
-          // Create a new filter object for each period to ensure unique data
-          const periodFilter = {
-            ...filters,
-            activationPeriod: period
-          };
-
-          // Clear any cached data before fetching
-          setAnalytics(null);
-          setFacultyAnalytics(null);
-
-          const result = await fetchAnalytics(periodFilter, true);  // Pass true to skip state updates
-
-          if (result?.analytics?.formStats?.totalResponses === 0) {
-            // Don't use previous period data in comparison mode
-            return null;
-          }
-
-          if (result) {
-            return {
-              period: period,
-              data: result
-            };
-          }
-          return null;
-        })
-      );
-
-      const validResults = periodsData.filter(result => result !== null);
-
-      if (validResults.length > 0) {
-        const combinedAnalytics = {};
-        validResults.forEach((result, index) => {
-          // Store each period's data separately
-          combinedAnalytics[`period${index + 1}`] = {
-            ...result.data,
-            periodStart: result.period
-          };
-        });
-
-        console.log('Combined Analytics:', JSON.stringify(combinedAnalytics, null, 2));
-        setComparisonAnalytics(combinedAnalytics);
+      const params = { formId: selectedForm, ...filters };
+      
+      // Validate activation period format
+      if (params.activationPeriod) {
+        try {
+          params.activationPeriod = new Date(params.activationPeriod).toISOString();
+        } catch (e) {
+          console.error('Invalid activation period date:', params.activationPeriod);
+          toast.error('Invalid activation period');
+          return;
+        }
       }
+      
+      const response = await responseAPI.getAnalyticsTableView(params);
+      setTableData(response.data);
     } catch (error) {
-      console.error('Error comparing periods:', error);
-      toast.error('Failed to compare periods');
+      console.error('Error fetching table data:', error);
+      toast.error('Failed to load table data');
     } finally {
-      setLoadingFacultyAnalytics(false); // Reset both loading states
-      setLoading(false);
+      setLoadingTableData(false);
     }
   };
+
+  // Fetch table data when switching to table view
+  useEffect(() => {
+    if (viewMode === 'table' && selectedForm) {
+      fetchTableData();
+    }
+  }, [viewMode, selectedForm, filters]);
 
   const handleFormChange = (formId) => {
     setSelectedForm(formId);
     setAnalytics(null);
-    setFacultyAnalytics(null);
 
     const form = forms.find((f) => f._id === formId);
     if (form) {
@@ -354,500 +264,403 @@ const ResponseAnalytics = () => {
     }
   };
 
-  if (loading && !analytics && !comparisonAnalytics) {
+  if (loading && !analytics) {
     return <Loader />;
   }
 
   return (
-    <div className="p-6 bg-gray-50 min-h-screen space-y-6">
-      {/* Header */}
-      <div className="mb-6 md:mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex items-center gap-x-4">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-2 rounded-full hover:bg-gray-100 transition-colors"
-            title="Go back"
-          >
-            <ArrowLeft className="h-5 w-5 md:h-6 md:w-6 text-gray-600" />
-          </button>
-          <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-gray-900 flex items-center">
-              <BarChart3 className="h-6 w-6 md:h-8 md:w-8 text-royal-600 mr-2 md:mr-3" />
-              Response Analytics
-            </h1>
-            <p className="text-sm md:text-base text-gray-600 mt-1 md:mt-2">Analyze feedback responses and generate insights</p>
-          </div>
-        </div>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50/30 to-purple-50/20">
+      {/* Modern Header with Gradient */}
+      <div className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => navigate(-1)}
+                className="p-2 rounded-lg hover:bg-gray-100 transition-all duration-200"
+                title="Go back"
+              >
+                <ArrowLeft className="h-5 w-5 text-gray-600" />
+              </button>
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg shadow-md">
+                  <BarChart3 className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-gray-900 via-blue-800 to-purple-800 bg-clip-text text-transparent">
+                    Response Analytics
+                  </h1>
+                  <p className="text-xs text-gray-600 hidden sm:block">Analyze feedback responses</p>
+                </div>
+              </div>
+            </div>
 
-        <div className="flex flex-wrap items-center gap-2 md:gap-4">
-          <button
-            onClick={() => setShowPieCharts(!showPieCharts)}
-            disabled={!selectedForm}
-            className="flex items-center btn btn-secondary px-3 py-2 rounded-md hover:bg-gray-100 transition"
-          >
-            {showPieCharts ? (
-              <>
-                <List className="h-4 w-4 mr-2" />
-                Show Table
-              </>
-            ) : (
-              <>
-                <PieChartIcon className="h-4 w-4 mr-2" />
-                Show Charts
-              </>
-            )}
-          </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setViewMode(viewMode === 'charts' ? 'table' : 'charts')}
+                disabled={!selectedForm}
+                className="flex items-center gap-1.5 px-3 py-2 bg-white border-2 border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:border-blue-400 hover:text-blue-600 hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {viewMode === 'table' ? (
+                  <>
+                    <BarChart3 className="h-4 w-4" />
+                    <span className="hidden sm:inline text-xs">Charts</span>
+                  </>
+                ) : (
+                  <>
+                    <TableIcon className="h-4 w-4" />
+                    <span className="hidden sm:inline text-xs">Table</span>
+                  </>
+                )}
+              </button>
 
-          <button
-            onClick={() => {
-              if (comparisonAnalytics) {
-                setComparisonAnalytics(null);
-              } else {
-                setShowCompareModal(true);
-              }
-            }}
-            disabled={!selectedForm || (!comparisonAnalytics && activationPeriods.length < 2)}
-            className={`flex items-center ${comparisonAnalytics ? 'btn btn-royal' : 'btn btn-secondary'} px-3 py-2 rounded-md transition`}
-          >
-            <GitCompare className="h-4 w-4 mr-2" />
-            {comparisonAnalytics ? 'Exit Comparison' : 'Compare Periods'}
-          </button>
+              <button
+                onClick={handleComprehensiveExport}
+                disabled={!selectedForm}
+                className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg text-sm font-medium hover:from-green-600 hover:to-emerald-700 hover:shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download className="h-4 w-4" />
+                <span className="hidden sm:inline text-xs">Excel</span>
+              </button>
 
-          <button
-            onClick={handleComprehensiveExport}
-            disabled={!selectedForm}
-            className="flex items-center btn btn-primary px-3 py-2 rounded-md hover:bg-green-700 transition bg-green-600"
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Export Analytics (Excel)
-          </button>
-
-          <button
-            onClick={handleExport}
-            disabled={!selectedForm}
-            className="flex items-center btn btn-secondary px-3 py-2 rounded-md hover:bg-gray-200 transition"
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Export CSV
-          </button>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="bg-white rounded-lg p-3 md:p-6 border border-gray-200 mb-6 overflow-x-hidden">
-        <h3 className="text-base md:text-lg font-semibold text-gray-900 mb-4 flex items-center">
-          <Filter className="h-4 w-4 md:h-5 md:w-5 text-royal-600 mr-2" />
-          Filters
-        </h3>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 md:gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Feedback Form</label>
-            <select
-              value={selectedForm}
-              onChange={(e) => handleFormChange(e.target.value)}
-              className="input w-full"
-            >
-              <option value="">Select a form</option>
-              {forms.map(form => (
-                <option key={form._id} value={form._id}>{form.formName}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Activation Period</label>
-            <select
-              value={filters.activationPeriod}
-              onChange={(e) => handleFilterChange('activationPeriod', e.target.value)}
-              className="input w-full"
-              disabled={!selectedForm || activationPeriods.length === 0}
-            >
-              <option value="">All Periods</option>
-              {activationPeriods.map((period, index) => (
-                <option key={index} value={period.start}>
-                  {`Period ${index + 1}: ${new Date(period.start).toLocaleDateString()} - ${period.end ? new Date(period.end).toLocaleDateString() : 'Active'}`}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Course</label>
-            <select
-              value={filters.course}
-              onChange={(e) => handleFilterChange('course', e.target.value)}
-              className="input w-full"
-            >
-              <option value="">All Courses</option>
-              {courses.map(course => (
-                <option key={course._id} value={course._id}>{course.courseName}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Year</label>
-            <select
-              value={filters.year}
-              onChange={(e) => handleFilterChange('year', e.target.value)}
-              className="input w-full"
-            >
-              <option value="">All Years</option>
-              <option value="1">1st Year</option>
-              <option value="2">2nd Year</option>
-              <option value="3">3rd Year</option>
-              <option value="4">4th Year</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Semester</label>
-            <select
-              value={filters.semester}
-              onChange={(e) => handleFilterChange('semester', e.target.value)}
-              className="input w-full"
-            >
-              <option value="">All Semesters</option>
-              {[...Array(2)].map((_, i) => (
-                <option key={i + 1} value={i + 1}>{i + 1}{['st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th'][i]} Semester</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Section</label>
-            <select
-              value={filters.section}
-              onChange={(e) => handleFilterChange('section', e.target.value)}
-              className="input w-full"
-              disabled={!filters.course || !filters.year || !filters.semester}
-            >
-              <option value="">All Sections</option>
-              {filters.course && filters.year && filters.semester && (() => {
-                const course = courses.find(c => c._id === filters.course);
-                const yearSemData = course?.yearSemesterSections?.find(
-                  ys => ys.year === parseInt(filters.year) && ys.semester === parseInt(filters.semester)
-                );
-                return yearSemData?.sections?.map(section => (
-                  <option key={section._id} value={section._id}>Section {section.sectionName}</option>
-                ));
-              })()}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Subject</label>
-            <select
-              value={filters.subject}
-              onChange={(e) => handleFilterChange('subject', e.target.value)}
-              className="input w-full"
-            >
-              <option value="">All Subjects</option>
-              {subjects.map(subject => (
-                <option key={subject._id} value={subject._id}>{subject.subjectName}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Compare Period Modal */}
-      <ComparePeriodModal
-        isOpen={showCompareModal}
-        onClose={() => setShowCompareModal(false)}
-        activationPeriods={activationPeriods}
-        onCompare={handleCompare}
-      />
-
-      {/* Analytics Content */}
-      {(analytics || comparisonAnalytics) ? (
-        <div className="space-y-6">
-          {/* Form Overview */}
-          <div className="bg-white rounded-lg p-6 border border-gray-200">
-            <h3 className="text-xl font-semibold text-gray-900 mb-4">{(analytics?.form || comparisonAnalytics?.period1?.analytics?.form)?.formName || 'Analytics'}</h3>
-            <p className="text-gray-600 mb-6">{(analytics?.form || comparisonAnalytics?.period1?.analytics?.form)?.description || ''}</p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
-              {comparisonAnalytics ? (
-                <>
-                  <div className="col-span-full mb-4">
-                    <h4 className="text-lg font-semibold text-gray-800 mb-2">Period Comparison</h4>
-                  </div>
-                  <div className="text-center col-span-2">
-                    <div className="text-sm text-gray-500 mb-1">Total Responses</div>
-                    <div className="flex flex-wrap justify-center items-center gap-4">
-                      {Object.entries(comparisonAnalytics).map(([periodKey, data], index) => {
-                        const period = activationPeriods.find(p => p.start === data.periodStart);
-                        const isActive = period && !period.end;
-                        const startDate = new Date(period.start).toLocaleDateString();
-                        const endDate = period.end ? new Date(period.end).toLocaleDateString() : 'Active';
-
-                        return (
-                          <div key={periodKey} className="flex items-center">
-                            {index > 0 && <div className="text-gray-400 mx-2">vs</div>}
-                            <div>
-                              {data.analytics.formStats.totalResponses > 0 ? (
-                                <div className="text-xl md:text-2xl font-bold text-royal-600">
-                                  {data.analytics.formStats.totalResponses}
-                                  {data.isUsingPreviousPeriodData && (
-                                    <span className="text-xs text-amber-500 ml-1">(Previous Period)</span>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="flex flex-col items-center">
-                                  <ClipboardX className="h-6 w-6 text-gray-400 mb-1" />
-                                  <div className="text-sm text-gray-500">No Responses</div>
-                                </div>
-                              )}
-                              <div className="text-xs text-gray-500">
-                                {startDate} - {endDate}
-                                {isActive && <span className="ml-1 text-green-500">(Active)</span>}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div className="text-center col-span-2">
-                    <div className="text-sm text-gray-500 mb-1">Unique Students</div>
-                    <div className="flex flex-wrap justify-center items-center gap-4">
-                      {Object.entries(comparisonAnalytics).map(([periodKey, data], index) => (
-                        <div key={periodKey} className="flex items-center">
-                          {index > 0 && <div className="text-gray-400 mx-2">vs</div>}
-                          <div>
-                            <div className="text-xl md:text-2xl font-bold text-green-600">
-                              {data.analytics.formStats.uniqueStudents}
-                            </div>
-                            <div className="text-xs text-gray-500">Period {index + 1}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-royal-600">{analytics.formStats.totalResponses}</div>
-                    <div className="text-sm text-gray-500">Total Responses</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-green-600">{analytics.formStats.uniqueStudents}</div>
-                    <div className="text-sm text-gray-500">Unique Students</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-blue-600">{analytics.formStats.subjects}</div>
-                    <div className="text-sm text-gray-500">Subjects</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-purple-600">{analytics.formStats.courses}</div>
-                    <div className="text-sm text-gray-500">Courses</div>
-                  </div>
-                </>
-              )}
+              <button
+                onClick={handleExport}
+                disabled={!selectedForm}
+                className="flex items-center gap-1.5 px-3 py-2 bg-white border-2 border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:border-gray-300 hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download className="h-4 w-4" />
+                <span className="hidden sm:inline text-xs">CSV</span>
+              </button>
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* Faculty Analytics / Pie Charts */}
-          {!comparisonAnalytics && (
-            loadingFacultyAnalytics ? (
+      {/* Filters Section */}
+      <div className="px-4 sm:px-6 lg:px-8 py-4">
+        <div className="bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden">
+          <div className="bg-gradient-to-r from-blue-50 to-purple-50 px-4 py-3 border-b border-gray-200">
+            <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+              <div className="p-1 bg-white rounded-lg shadow-sm">
+                <Filter className="h-3.5 w-3.5 text-blue-600" />
+              </div>
+              <span>Filters</span>
+            </h3>
+          </div>
+          <div className="p-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Feedback Form</label>
+                <select
+                  value={selectedForm}
+                  onChange={(e) => handleFormChange(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 outline-none"
+                >
+                  <option value="">Select a form</option>
+                  {forms.map(form => (
+                    <option key={form._id} value={form._id}>{form.formName}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Activation Period</label>
+                <select
+                  value={filters.activationPeriod}
+                  onChange={(e) => handleFilterChange('activationPeriod', e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!selectedForm || activationPeriods.length === 0}
+                >
+                  <option value="">All Periods</option>
+                  {activationPeriods.map((period, index) => (
+                    <option key={index} value={period.start}>
+                      {`Period ${index + 1}: ${new Date(period.start).toLocaleDateString()} - ${period.end ? new Date(period.end).toLocaleDateString() : 'Active'}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Course</label>
+                <select
+                  value={filters.course}
+                  onChange={(e) => handleFilterChange('course', e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 outline-none"
+                >
+                  <option value="">All Courses</option>
+                  {courses.map(course => (
+                    <option key={course._id} value={course._id}>{course.courseName}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Year</label>
+                <select
+                  value={filters.year}
+                  onChange={(e) => handleFilterChange('year', e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 outline-none"
+                >
+                  <option value="">All Years</option>
+                  <option value="1">1st Year</option>
+                  <option value="2">2nd Year</option>
+                  <option value="3">3rd Year</option>
+                  <option value="4">4th Year</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Semester</label>
+                <select
+                  value={filters.semester}
+                  onChange={(e) => handleFilterChange('semester', e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 outline-none"
+                >
+                  <option value="">All Semesters</option>
+                  {[...Array(2)].map((_, i) => (
+                    <option key={i + 1} value={i + 1}>{i + 1}{['st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th'][i]} Semester</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Section</label>
+                <select
+                  value={filters.section}
+                  onChange={(e) => handleFilterChange('section', e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!filters.course || !filters.year || !filters.semester}
+                >
+                  <option value="">All Sections</option>
+                  {filters.course && filters.year && filters.semester && (() => {
+                    const course = courses.find(c => c._id === filters.course);
+                    const yearSemData = course?.yearSemesterSections?.find(
+                      ys => ys.year === parseInt(filters.year) && ys.semester === parseInt(filters.semester)
+                    );
+                    return yearSemData?.sections?.map(section => (
+                      <option key={section._id} value={section._id}>Section {section.sectionName}</option>
+                    ));
+                  })()}
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Analytics Content */}
+      <div className="px-4 sm:px-6 lg:px-8 pb-6">
+        {analytics ? (
+          <div className="space-y-4">
+            {/* Form Overview - Modern Stats Cards */}
+            <div className="bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden">
+              <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-4 py-3">
+                <h3 className="text-base font-bold text-white">{analytics?.form?.formName || 'Analytics'}</h3>
+                {analytics?.form?.description && (
+                  <p className="text-blue-100 text-xs mt-0.5">{analytics.form.description}</p>
+                )}
+              </div>
+
+              <div className="p-4">
+                <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-3 border border-blue-200">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-2xl font-bold text-blue-700">{analytics.formStats.totalResponses}</div>
+                        <div className="text-xs font-medium text-blue-600 mt-0.5">Total Responses</div>
+                      </div>
+                      <div className="p-2 bg-blue-500 rounded-lg">
+                        <BarChart3 className="h-5 w-5 text-white" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-3 border border-green-200">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-2xl font-bold text-green-700">{analytics.formStats.uniqueStudents}</div>
+                        <div className="text-xs font-medium text-green-600 mt-0.5">Unique Students</div>
+                      </div>
+                      <div className="p-2 bg-green-500 rounded-lg">
+                        <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-3 border border-purple-200">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-2xl font-bold text-purple-700">{analytics.formStats.subjects}</div>
+                        <div className="text-xs font-medium text-purple-600 mt-0.5">Subjects</div>
+                      </div>
+                      <div className="p-2 bg-purple-500 rounded-lg">
+                        <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-3 border border-orange-200">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-2xl font-bold text-orange-700">{analytics.formStats.courses}</div>
+                        <div className="text-xs font-medium text-orange-600 mt-0.5">Courses</div>
+                      </div>
+                      <div className="p-2 bg-orange-500 rounded-lg">
+                        <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          {/* Table View */}
+          {viewMode === 'table' ? (
+            loadingTableData ? (
               <div className="text-center py-12">
                 <Loader2 className="h-8 w-8 animate-spin text-royal-600 mx-auto mb-4" />
-                <p className="text-gray-600">Loading Faculty Analytics...</p>
+                <p className="text-gray-600">Loading Table Data...</p>
               </div>
-            ) : analytics.formStats.totalResponses === 0 ? (
-              <div className="bg-white rounded-lg p-6 border border-gray-200">
-                <div className="text-center py-8">
-                  <ClipboardX className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-                  <h4 className="text-lg font-semibold text-gray-800 mb-2">No Responses Yet</h4>
-                  <p className="text-gray-600">
-                    {activationPeriods.find(p => p.start === filters.activationPeriod && !p.end)
-                      ? "This period is currently active. Analytics will be shown as responses are submitted."
-                      : "No responses were received during this period."}
-                  </p>
+            ) : tableData && tableData.tableGroups && tableData.tableGroups.length > 0 ? (
+              <div className="space-y-4">
+                {tableData.tableGroups.map((group, groupIdx) => (
+                  <div key={groupIdx} className="bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden">
+                    {/* Group Header */}
+                    <div className="bg-gradient-to-r from-indigo-500 to-purple-600 px-4 py-2.5">
+                      <h3 className="text-sm font-bold text-white">
+                        {group.branch} - {group.yearSem} - Section {group.section}
+                      </h3>
+                      <p className="text-indigo-100 text-xs mt-0.5">
+                        {group.rows.length} subject{group.rows.length !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+
+                    {/* Table */}
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full border-collapse border border-gray-300">
+                        <thead>
+                          <tr className="bg-blue-600 text-white">
+                            <th className="border border-gray-300 px-3 py-2 text-center text-xs font-bold min-w-[120px]">SUBJECT</th>
+                            <th className="border border-gray-300 px-3 py-2 text-center text-xs font-bold min-w-[100px]">STAFF</th>
+                            <th className="border border-gray-300 px-2 py-2 text-center text-xs font-bold">COUNT</th>
+                            {tableData.questions.map((q) => (
+                              <th key={q.id} className="border border-gray-300 px-2 py-2 text-center font-bold min-w-[150px] max-w-[250px]">
+                                <div className="text-[10px] leading-tight">{q.text}</div>
+                                <div className="text-[9px] mt-0.5 opacity-75">({q.id})</div>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.rows.map((row, idx) => (
+                            <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-blue-50'}>
+                              <td 
+                                className="border border-gray-300 px-2 py-1.5 text-xs cursor-pointer hover:bg-blue-100 transition-colors"
+                                onClick={() => setComparisonModal({
+                                  isOpen: true,
+                                  subject: {
+                                    id: row.subjectId,
+                                    name: row.subject,
+                                    staff: row.staff
+                                  }
+                                })}
+                                title="Click to compare periods"
+                              >
+                                <span className="text-blue-600 hover:text-blue-800 font-medium underline decoration-dotted">
+                                  {row.subject}
+                                </span>
+                              </td>
+                              <td className="border border-gray-300 px-2 py-1.5 text-xs">{row.staff}</td>
+                              <td className="border border-gray-300 px-2 py-1.5 text-center text-xs font-semibold">{row.count}</td>
+                              {tableData.questions.map((q) => {
+                                const value = row[q.id];
+                                const bgColor = row.ratingData?.[q.id]?.bgColor || 'transparent';
+                                const isTextQuestion = q.type === 'text' || q.type === 'textarea';
+                                
+                                return (
+                                  <td
+                                    key={q.id}
+                                    className={`border border-gray-300 px-2 py-1.5 ${isTextQuestion ? 'text-left text-[10px]' : 'text-center text-xs'} font-semibold`}
+                                    style={{ backgroundColor: bgColor }}
+                                  >
+                                    <div className={isTextQuestion ? 'break-words max-w-[200px]' : ''}>
+                                      {value || '-'}
+                                    </div>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Legend for color coding */}
+                <div className="bg-gradient-to-r from-gray-50 to-gray-100 rounded-2xl shadow-md border border-gray-200 p-6">
+                  <h4 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
+                    <svg className="h-5 w-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+                    </svg>
+                    Rating Legend
+                  </h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 shadow-sm">
+                      <div className="w-4 h-4 rounded-full" style={{ backgroundColor: '#90EE90' }}></div>
+                      <span className="text-sm font-medium text-gray-700">Excellent (4.5-5.0)</span>
+                    </div>
+                    <div className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 shadow-sm">
+                      <div className="w-4 h-4 rounded-full" style={{ backgroundColor: '#FFD700' }}></div>
+                      <span className="text-sm font-medium text-gray-700">Good (3.5-4.49)</span>
+                    </div>
+                    <div className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 shadow-sm">
+                      <div className="w-4 h-4 rounded-full" style={{ backgroundColor: '#FFA500' }}></div>
+                      <span className="text-sm font-medium text-gray-700">Average (2.5-3.49)</span>
+                    </div>
+                    <div className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 shadow-sm">
+                      <div className="w-4 h-4 rounded-full" style={{ backgroundColor: '#FF6B6B' }}></div>
+                      <span className="text-sm font-medium text-gray-700">Poor (&lt;2.5)</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (
-              <FacultyAnalytics
-                data={facultyAnalytics || []}
-                questions={analytics.questionAnalytics}
-                showCharts={showPieCharts}
-              />
+              <div className="bg-white rounded-lg p-6 border border-gray-200">
+                <div className="text-center py-8">
+                  <ClipboardX className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                  <h4 className="text-lg font-semibold text-gray-800 mb-2">No Data Available</h4>
+                  <p className="text-gray-600">No analytics data available for the selected filters.</p>
+                </div>
+              </div>
             )
-          )}
-
-          {/* Question Analytics */}
-          <div className="space-y-6">
-            <h3 className="text-xl font-semibold text-gray-900">Question Analysis</h3>
-            {comparisonAnalytics ? (
-              // When comparing periods, show each question with period data side by side
-              comparisonAnalytics.period1.analytics.questionAnalytics.map((question, index) => {
-                // Get only the periods that have actual data
-                const validPeriods = Object.entries(comparisonAnalytics).filter(([_, periodData]) =>
-                  periodData.analytics && periodData.facultyAnalytics &&
-                  periodData.facultyAnalytics.length > 0 &&
-                  periodData.analytics.formStats.totalResponses > 0
-                );
-
-                // Get faculty data from all valid periods
-                const allFacultyData = validPeriods.flatMap(([_, periodData]) => periodData.facultyAnalytics);
-                const uniqueFacultyIds = [...new Set(allFacultyData.map(f => f.faculty._id))];
-                const referenceFacultyList = uniqueFacultyIds.map(id =>
-                  allFacultyData.find(f => f.faculty._id === id)
-                ).filter(Boolean);
-
-                // Generate accurate period labels
-                const toIso = (v) => {
-                  try { return new Date(v).toISOString(); } catch { return String(v || ''); }
-                };
-                const periodLabels = validPeriods.map(([_, periodData]) => {
-                  const match = activationPeriods.find(p => toIso(p.start) === toIso(periodData.periodStart));
-                  if (match) {
-                    const startDate = new Date(match.start).toLocaleDateString();
-                    const endDate = match.end ? new Date(match.end).toLocaleDateString() : 'Active';
-                    return `${startDate} - ${endDate}`;
-                  }
-                  // Fallback if not found in local activationPeriods
-                  const startDate = new Date(periodData.periodStart).toLocaleDateString();
-                  return `${startDate}`;
-                });
-
-                // For each faculty, create a row that shows their data across valid periods only
-                const periodsData = referenceFacultyList.map(facultyRef => {
-                  return {
-                    faculty: facultyRef.faculty,
-                    subjects: facultyRef.subjects,
-                    // Include faculty analytics only from valid periods
-                    facultyAnalytics: validPeriods.map(([_, periodData]) => {
-                      const facultyInPeriod = periodData.facultyAnalytics.find(
-                        f => f.faculty._id === facultyRef.faculty._id
-                      );
-                      const questionData = facultyInPeriod?.questionAnalytics.find(
-                        q => q.questionId === question.questionId
-                      );
-                      // Only return analytics if the period has valid data
-                      return questionData?.analytics ? {
-                        scale: questionData.analytics,
-                        analytics: questionData.analytics
-                      } : null;
-                    })
-                  };
-                });
-
-                return (
-                  <QuestionFacultyAnalytics
-                    key={question.questionId}
-                    question={question}
-                    facultyBreakdown={periodsData}
-                    showCharts={showPieCharts}
-                    isPeriodComparison={true}
-                    periodLabels={periodLabels}
-                  />
-                );
-              })
-            ) : (
-              // Regular view showing faculty breakdown (no Overall row)
-              analytics.questionAnalytics.map((question, index) => {
-                const isText = question.questionType === 'text' || question.questionType === 'textarea';
-                const facultyBreakdown = (facultyAnalytics && facultyAnalytics.length > 0)
-                  ? facultyAnalytics.map(facultyData => {
-                    const questionAnalysis = facultyData.questionAnalytics.find(
-                      qa => qa.questionId === question.questionId
-                    );
-                    return {
-                      faculty: facultyData.faculty,
-                      subjects: facultyData.subjects,
-                      analytics: questionAnalysis?.analytics || {}
-                    };
-                  })
-                  : [];
-
-                return (
-                  <div key={question.questionId} className="space-y-4">
-                    <QuestionFacultyAnalytics
-                      question={question}
-                      facultyBreakdown={facultyBreakdown}
-                      showCharts={showPieCharts}
-                      isPeriodComparison={false}
-                    />
-
-                    {isText && (
-                      <div className="bg-white rounded-lg p-4 border border-gray-200">
-                        <div className="flex items-center justify-between mb-3">
-                          <h4 className="text-base font-semibold text-gray-900">Raw Text Answers</h4>
-                          <div className="flex gap-2">
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              onClick={() => loadTextAnswersForQuestion(question.questionId)}
-                            >
-                              Load Answers
-                            </button>
-                            <button
-                              className="btn btn-primary btn-sm"
-                              onClick={() => exportTextAnswers(question.questionId)}
-                            >
-                              Export CSV (All Faculties)
-                            </button>
-                          </div>
-                        </div>
-                        <div className="divide-y">
-                          {(textAnswersByQuestion[question.questionId] || []).length === 0 ? (
-                            <p className="text-sm text-gray-500">No data loaded yet.</p>
-                          ) : (
-                            (textAnswersByQuestion[question.questionId] || []).map(group => (
-                              <details key={group.faculty._id} className="py-3">
-                                <summary className="cursor-pointer flex items-center justify-between">
-                                  <span className="font-medium">{group.faculty.name}</span>
-                                  <span className="text-xs text-gray-500">{group.total} answers</span>
-                                </summary>
-                                <div className="mt-3 space-y-3">
-                                  <div className="flex justify-end gap-2">
-                                    <button className="btn btn-secondary btn-sm" onClick={() => exportTextAnswers(question.questionId, group.faculty._id)}>Export CSV</button>
-                                    {group.hasMore && (
-                                      <button
-                                        className="btn btn-outline btn-sm"
-                                        onClick={async () => {
-                                          const nextPage = (group.page || 1) + 1;
-                                          const more = await loadTextAnswersForQuestion(question.questionId, group.faculty._id, nextPage);
-                                          setTextAnswersByQuestion(prev => {
-                                            const current = prev[question.questionId] || [];
-                                            const updated = current.map(g => g.faculty._id === group.faculty._id ? more.find(m => m.faculty._id === g.faculty._id) || g : g);
-                                            return { ...prev, [question.questionId]: updated };
-                                          });
-                                        }}
-                                      >
-                                        Load More
-                                      </button>
-                                    )}
-                                  </div>
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    {group.answers.map((a, idx) => (
-                                      <AnswerBox key={idx} data={a} />
-                                    ))}
-                                  </div>
-                                </div>
-                              </details>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-            {/* Old standalone text answers section removed; now integrated under each question card */}
+          ) : null}
           </div>
-        </div>
-      ) : (
-        <div className="text-center py-12">
-          <BarChart3 className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No Analytics Available</h3>
-          <p className="text-gray-500">Please select a feedback form to view analytics</p>
-        </div>
-      )}
+        ) : (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-12">
+            <div className="text-center">
+              <BarChart3 className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">No Analytics Available</h3>
+              <p className="text-gray-600">Please select a feedback form to view analytics</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Subject Comparison Modal */}
+      <SubjectComparisonModal
+        isOpen={comparisonModal.isOpen}
+        onClose={() => setComparisonModal({ isOpen: false, subject: null })}
+        subject={comparisonModal.subject}
+        formId={selectedForm}
+        activationPeriods={activationPeriods}
+      />
     </div>
   );
 };

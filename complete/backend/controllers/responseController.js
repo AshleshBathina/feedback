@@ -1471,16 +1471,324 @@ const exportComprehensiveAnalytics = async (req, res) => {
   }
 };
 
-module.exports = {
-  getAllResponses,
-  getResponseById,
-  getQuestionAnalytics,
-  getResponseStats,
-  exportToCSV,
-  exportComprehensiveAnalytics,
-  getFacultyPerformance,
-  deleteResponse,
-  getFacultyQuestionAnalytics,
+// Get analytics in table format (same structure as Excel export)
+const getAnalyticsTableView = async (req, res) => {
+  try {
+    const { formId, course, year, semester, section, subject, activationPeriod } = req.query;
+
+    if (!formId) {
+      return res.status(400).json({ message: 'Form ID is required' });
+    }
+
+    // Build filter
+    const filter = { 'subjectResponses.form': formId };
+    if (course) filter['courseInfo.course'] = course;
+    if (year) filter['courseInfo.year'] = parseInt(year);
+    if (semester) filter['courseInfo.semester'] = parseInt(semester);
+    if (section) filter['courseInfo.section'] = section;
+    if (subject) filter['subjectResponses.subject'] = subject;
+    
+    if (activationPeriod) {
+      const form = await FeedbackForm.findById(formId);
+      if (form && form.activationPeriods) {
+        const period = form.activationPeriods.find(p => p.start.toISOString() === activationPeriod);
+        if (period) {
+          if (period.end) {
+            filter.submittedAt = { $gte: period.start, $lte: period.end };
+          } else {
+            filter.submittedAt = { $gte: period.start };
+          }
+        }
+      }
+    }
+
+    // Fetch all responses with full population
+    const responses = await Response.find(filter)
+      .populate({
+        path: 'courseInfo.course',
+        select: 'courseName courseCode yearSemesterSections'
+      })
+      .populate({
+        path: 'subjectResponses.subject',
+        populate: [
+          {
+            path: 'faculty',
+            model: 'Faculty',
+            select: 'name designation department'
+          },
+          {
+            path: 'sectionFaculty.faculty',
+            model: 'Faculty',
+            select: 'name designation department'
+          }
+        ]
+      })
+      .populate('subjectResponses.form');
+
+    if (responses.length === 0) {
+      return res.json({ tableData: [], questions: [] });
+    }
+
+    // Get form details
+    const form = await FeedbackForm.findById(formId);
+    if (!form) {
+      return res.status(404).json({ message: 'Form not found' });
+    }
+
+    // Group data by Year → Course → Semester → Section → Subject → Faculty
+    const groupedData = {};
+
+    responses.forEach(response => {
+      const year = response.courseInfo.year;
+      const semester = response.courseInfo.semester;
+      const courseName = response.courseInfo.course.courseName;
+      const courseObj = response.courseInfo.course;
+      const sectionId = response.courseInfo.section;
+      
+      // Find section name from year-semester specific sections
+      let sectionName = '';
+      if (sectionId && courseObj.yearSemesterSections) {
+        const yearSemData = courseObj.yearSemesterSections.find(
+          ys => ys.year === year && ys.semester === semester
+        );
+        if (yearSemData) {
+          const section = yearSemData.sections.find(s => s._id.toString() === sectionId.toString());
+          sectionName = section ? section.sectionName : '';
+        }
+      }
+
+      response.subjectResponses.forEach(sr => {
+        if (sr.form && sr.form._id.toString() === formId && sr.subject) {
+          const subjectName = sr.subject.subjectName;
+          
+          // Find the correct faculty for this student's section
+          let faculty = null;
+          
+          // Check if subject has section-specific faculty assignments
+          if (sr.subject.sectionFaculty && sr.subject.sectionFaculty.length > 0 && sectionId) {
+            const sectionFacultyEntry = sr.subject.sectionFaculty.find(
+              sf => sf.section && sf.section.toString() === sectionId.toString()
+            );
+            if (sectionFacultyEntry && sectionFacultyEntry.faculty) {
+              faculty = sectionFacultyEntry.faculty;
+            }
+          }
+          
+          // Fall back to default faculty if no section-specific faculty found
+          if (!faculty && sr.subject.faculty) {
+            faculty = sr.subject.faculty;
+          }
+          
+          // If still no faculty, use "Not Assigned" placeholder
+          let facultyName = 'Not Assigned';
+          let facultyId = 'not-assigned';
+          
+          if (faculty) {
+            facultyName = faculty.name;
+            facultyId = faculty._id.toString();
+          }
+
+          // Create unique key
+          const key = `${year}|${semester}|${courseName}|${sectionName}|${subjectName}|${facultyId}`;
+
+          if (!groupedData[key]) {
+            groupedData[key] = {
+              courseName,
+              year,
+              semester,
+              sectionName,
+              subjectName,
+              facultyName,
+              facultyId,
+              responseCount: 0,
+              responses: [],
+              questionData: {}
+            };
+          }
+
+          groupedData[key].responseCount++;
+          groupedData[key].responses.push({
+            answers: sr.answers,
+            questions: sr.questions
+          });
+        }
+      });
+    });
+
+    // Calculate question analytics for each group
+    Object.keys(groupedData).forEach(key => {
+      const group = groupedData[key];
+      
+      form.questions.forEach((question, qIndex) => {
+        const answers = group.responses
+          .map(r => r.answers[qIndex])
+          .filter(a => a !== undefined && a !== null && a !== '');
+
+        let analytics = '';
+        let ratingInfo = null;
+
+        switch (question.questionType) {
+          case 'scale':
+            const scaleValues = answers.map(a => parseInt(a)).filter(v => !isNaN(v));
+            if (scaleValues.length > 0) {
+              const avg = scaleValues.reduce((s, v) => s + v, 0) / scaleValues.length;
+              const scaleMax = question.scaleMax || 5;
+              ratingInfo = mapRatingToWord(avg, scaleMax);
+              
+              // Display rating word with value in brackets
+              analytics = `${ratingInfo.word} (${avg.toFixed(2)})`;
+              
+              // Store rating info for styling
+              if (!group.ratingData) group.ratingData = {};
+              group.ratingData[`Q${qIndex + 1}`] = ratingInfo;
+            }
+            break;
+
+          case 'yesno':
+            const yesCount = answers.filter(a => a === 'yes' || a === true).length;
+            const total = answers.length;
+            if (total > 0) {
+              const yesPercent = ((yesCount / total) * 100).toFixed(1);
+              analytics = `${yesPercent}%`;
+            }
+            break;
+
+          case 'multiplechoice':
+            const choiceCounts = {};
+            answers.forEach(a => {
+              if (Array.isArray(a)) {
+                a.forEach(choice => {
+                  choiceCounts[choice] = (choiceCounts[choice] || 0) + 1;
+                });
+              } else {
+                choiceCounts[a] = (choiceCounts[a] || 0) + 1;
+              }
+            });
+            const topChoice = Object.entries(choiceCounts)
+              .sort((a, b) => b[1] - a[1])[0];
+            if (topChoice) {
+              analytics = `${topChoice[0]} (${topChoice[1]})`;
+            }
+            break;
+
+          case 'text':
+          case 'textarea':
+            // Analyze text responses to find most common words/phrases
+            if (answers.length > 0) {
+              const wordFrequency = {};
+              
+              // Common stopwords to exclude
+              const stopwords = new Set(['that', 'this', 'with', 'from', 'have', 'been', 'were', 'will', 'would', 'could', 'should', 'their', 'there', 'where', 'which', 'what', 'when', 'very', 'much', 'more', 'some', 'such', 'into', 'than', 'them', 'then', 'these', 'those', 'about', 'after', 'before', 'being', 'during']);
+              
+              answers.forEach(answer => {
+                if (typeof answer === 'string' && answer.trim()) {
+                  // Convert to lowercase and split into words
+                  const words = answer.toLowerCase()
+                    .replace(/[^\w\s]/g, ' ') // Remove punctuation
+                    .split(/\s+/)
+                    .filter(word => word.length > 3 && !stopwords.has(word)); // Filter meaningful words
+                  
+                  words.forEach(word => {
+                    wordFrequency[word] = (wordFrequency[word] || 0) + 1;
+                  });
+                }
+              });
+              
+              // Get top 3 most common words
+              // If only 1-2 responses, show all words; otherwise only show words appearing more than once
+              const minCount = answers.length <= 2 ? 1 : 2;
+              const topWords = Object.entries(wordFrequency)
+                .filter(([_, count]) => count >= minCount)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([word, count]) => answers.length === 1 ? word : `${word} (${count})`)
+                .join(', ');
+              
+              analytics = topWords || `${answers.length} response(s)`;
+            } else {
+              analytics = '0 responses';
+            }
+            break;
+        }
+
+        group.questionData[`Q${qIndex + 1}`] = analytics;
+      });
+    });
+
+    // Convert to array and sort
+    const yearSemMap = {
+      1: { 1: 'I-I', 2: 'I-II' },
+      2: { 1: 'II-I', 2: 'II-II' },
+      3: { 1: 'III-I', 2: 'III-II' },
+      4: { 1: 'IV-I', 2: 'IV-II' }
+    };
+
+    const allRows = Object.values(groupedData)
+      .map(row => ({
+        branch: row.courseName,
+        yearSem: yearSemMap[row.year]?.[row.semester] || `${row.year}-${row.semester}`,
+        year: row.year,
+        semester: row.semester,
+        section: row.sectionName || '',
+        subject: row.subjectName,
+        subjectId: row.subjectId,
+        staff: row.facultyName,
+        count: row.responseCount,
+        ...row.questionData,
+        ratingData: row.ratingData || {}
+      }))
+      .sort((a, b) => {
+        if (a.branch !== b.branch) return a.branch.localeCompare(b.branch);
+        if (a.year !== b.year) return a.year - b.year;
+        if (a.semester !== b.semester) return a.semester - b.semester;
+        if (a.section !== b.section) return a.section.localeCompare(b.section);
+        return a.subject.localeCompare(b.subject);
+      });
+
+    // Group by Year-Semester-Section for separate tables
+    const groupedTables = {};
+    allRows.forEach(row => {
+      const key = `${row.branch}|${row.yearSem}|${row.section}`;
+      if (!groupedTables[key]) {
+        groupedTables[key] = {
+          branch: row.branch,
+          yearSem: row.yearSem,
+          section: row.section,
+          year: row.year,
+          semester: row.semester,
+          rows: []
+        };
+      }
+      groupedTables[key].rows.push(row);
+    });
+
+    // Convert to array of table groups
+    const tableGroups = Object.values(groupedTables).sort((a, b) => {
+      if (a.branch !== b.branch) return a.branch.localeCompare(b.branch);
+      if (a.year !== b.year) return a.year - b.year;
+      if (a.semester !== b.semester) return a.semester - b.semester;
+      return a.section.localeCompare(b.section);
+    });
+
+    // Prepare questions metadata
+    const questions = form.questions.map((q, idx) => ({
+      id: `Q${idx + 1}`,
+      text: q.questionText,
+      type: q.questionType,
+      scaleMax: q.scaleMax || 5
+    }));
+
+    res.json({
+      tableGroups,
+      questions,
+      formName: form.formName
+    });
+
+  } catch (error) {
+    console.error('Get analytics table view error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
   getTextAnswers: async (req, res) => {
     try {
       const { formId, questionId, course, year, semester, section, activationPeriod, page = 1, limit = 50 } = req.query;
@@ -1560,7 +1868,7 @@ module.exports = {
     }
   },
   // New endpoints below
-  getTextAnswersByFaculty: async (req, res) => {
+  getTextAnswersByFaculty = async (req, res) => {
     try {
       const { formId, questionId, course, year, semester, section, subject, activationPeriod, facultyId, page = 1, limit = 50 } = req.query;
 
@@ -1660,7 +1968,7 @@ module.exports = {
       res.status(500).json({ message: 'Server error' });
     }
   },
-  exportTextAnswersCSV: async (req, res) => {
+  exportTextAnswersCSV = async (req, res) => {
     try {
       const { formId, questionId, course, year, semester, section, subject, activationPeriod, facultyId } = req.query;
       if (!formId || !questionId) {
@@ -1741,5 +2049,167 @@ module.exports = {
       console.error('Export text answers CSV error:', err);
       res.status(500).json({ message: 'Server error' });
     }
+  };
+
+// Compare subject across multiple periods
+const compareSubjectPeriods = async (req, res) => {
+  try {
+    const { formId, subjectId, periods } = req.query;
+
+    if (!formId || !subjectId || !periods) {
+      return res.status(400).json({ message: 'Form ID, Subject ID, and periods are required' });
+    }
+
+    // Parse periods array
+    const periodDates = Array.isArray(periods) ? periods : [periods];
+
+    // Get form details
+    const form = await FeedbackForm.findById(formId);
+    if (!form) {
+      return res.status(404).json({ message: 'Form not found' });
+    }
+
+    // Get subject details
+    const subject = await Subject.findById(subjectId).populate('faculty');
+    if (!subject) {
+      return res.status(404).json({ message: 'Subject not found' });
+    }
+
+    // Prepare comparison data for each period
+    const comparisonData = [];
+
+    for (const periodStart of periodDates) {
+      const period = form.activationPeriods.find(p => p.start.toISOString() === periodStart);
+      if (!period) continue;
+
+      // Build filter for this period
+      const filter = {
+        'subjectResponses.form': formId,
+        'subjectResponses.subject': subjectId,
+        submittedAt: period.end 
+          ? { $gte: period.start, $lte: period.end }
+          : { $gte: period.start }
+      };
+
+      // Fetch responses for this period
+      const responses = await Response.find(filter)
+        .populate('subjectResponses.subject')
+        .populate('subjectResponses.form');
+
+      // Extract subject responses
+      const subjectResponses = [];
+      responses.forEach(resp => {
+        const sr = resp.subjectResponses.find(
+          sr => sr.subject?._id.toString() === subjectId && sr.form?._id.toString() === formId
+        );
+        if (sr) subjectResponses.push(sr);
+      });
+
+      // Analyze questions
+      const questionAnalysis = form.questions.map((question, qIndex) => {
+        const answers = subjectResponses
+          .map(sr => sr.answers[qIndex])
+          .filter(a => a !== undefined && a !== null && a !== '');
+
+        let analysis = {
+          questionText: question.questionText,
+          questionType: question.questionType,
+          totalResponses: answers.length
+        };
+
+        switch (question.questionType) {
+          case 'scale':
+            const scaleValues = answers.map(a => parseInt(a)).filter(v => !isNaN(v));
+            if (scaleValues.length > 0) {
+              const avg = scaleValues.reduce((s, v) => s + v, 0) / scaleValues.length;
+              const ratingInfo = mapRatingToWord(avg, question.scaleMax || 5);
+              analysis.average = parseFloat(avg.toFixed(2));
+              analysis.ratingWord = ratingInfo.word;
+              analysis.distribution = {};
+              for (let i = 1; i <= (question.scaleMax || 5); i++) {
+                analysis.distribution[i] = scaleValues.filter(v => v === i).length;
+              }
+            }
+            break;
+
+          case 'multiple-choice':
+            analysis.optionCounts = {};
+            question.options.forEach(opt => {
+              analysis.optionCounts[opt] = answers.filter(a => a === opt).length;
+            });
+            break;
+
+          case 'text':
+          case 'textarea':
+            // Word frequency analysis
+            const wordFrequency = {};
+            const stopwords = new Set(['that', 'this', 'with', 'from', 'have', 'been', 'were', 'will', 'would', 'could', 'should', 'their', 'there', 'where', 'which', 'what', 'when', 'very', 'much', 'more', 'some', 'such', 'into', 'than', 'them', 'then', 'these', 'those', 'about', 'after', 'before', 'being', 'during']);
+            
+            answers.forEach(answer => {
+              if (typeof answer === 'string' && answer.trim()) {
+                const words = answer.toLowerCase()
+                  .replace(/[^\w\s]/g, ' ')
+                  .split(/\s+/)
+                  .filter(word => word.length > 3 && !stopwords.has(word));
+                
+                words.forEach(word => {
+                  wordFrequency[word] = (wordFrequency[word] || 0) + 1;
+                });
+              }
+            });
+
+            // Get top 5 words
+            analysis.topWords = Object.entries(wordFrequency)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 5)
+              .map(([word, count]) => ({ word, count }));
+            break;
+        }
+
+        return analysis;
+      });
+
+      comparisonData.push({
+        periodLabel: `Period ${form.activationPeriods.indexOf(period) + 1}`,
+        periodStart: period.start,
+        periodEnd: period.end,
+        totalResponses: subjectResponses.length,
+        questions: questionAnalysis
+      });
+    }
+
+    res.json({
+      subject: {
+        id: subject._id,
+        name: subject.subjectName,
+        code: subject.subjectCode,
+        faculty: subject.faculty?.name || 'N/A'
+      },
+      form: {
+        id: form._id,
+        name: form.formName
+      },
+      periods: comparisonData
+    });
+
+  } catch (error) {
+    console.error('Compare subject periods error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
+
+module.exports = {
+  getAllResponses,
+  getResponseById,
+  getQuestionAnalytics,
+  getResponseStats,
+  exportToCSV,
+  exportComprehensiveAnalytics,
+  getFacultyPerformance,
+  deleteResponse,
+  getFacultyQuestionAnalytics,
+  compareSubjectPeriods,
+  getAnalyticsTableView,
+  getTextAnswersByFaculty,
+  exportTextAnswersCSV
+}

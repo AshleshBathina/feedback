@@ -160,18 +160,17 @@ const StudentFeedbackSubmission = () => {
               <CheckCircle2 className="h-16 w-16 text-white" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-600 to-purple-600 bg-clip-text text-transparent mb-3">
-            Feedback Submitted
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-violet-600 to-purple-600 bg-clip-text text-transparent mb-3">
+            All Done! 🎉
           </h1>
-          <p className="text-gray-600 mb-8 text-lg">
-            You've successfully submitted this feedback form from this device.
-            Thank you for your time and valuable input!
+          <p className="text-gray-600 mb-8">
+            Thanks for sharing your feedback. It helps us improve!
           </p>
           <button
             onClick={() => navigate('/')}
             className="px-6 py-3 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-xl hover:from-violet-700 hover:to-purple-700 transform hover:scale-105 transition-all duration-200 shadow-lg hover:shadow-xl"
           >
-            Go to Home
+            Back to Home
           </button>
         </div>
       </div>
@@ -187,17 +186,17 @@ const StudentFeedbackSubmission = () => {
               <AlertTriangle className="h-16 w-16 text-white" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 bg-clip-text text-transparent mb-3">
-            Form Not Active
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 bg-clip-text text-transparent mb-3">
+            Form Not Available
           </h1>
-          <p className="text-gray-600 mb-8 text-lg">
-            This feedback form is not currently in an active period and cannot accept submissions.
+          <p className="text-gray-600 mb-8">
+            This feedback form isn't accepting responses right now. Please check back later.
           </p>
           <button
             onClick={() => navigate('/')}
             className="px-6 py-3 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-xl hover:from-violet-700 hover:to-purple-700 transform hover:scale-105 transition-all duration-200 shadow-lg hover:shadow-xl"
           >
-            Go to Home
+            Back to Home
           </button>
         </div>
       </div>
@@ -275,15 +274,19 @@ const StudentFeedbackSubmission = () => {
         setTimeout(() => {
           setActiveSubject(nextSubject._id);
           
-          // Scroll to next subject
-          const nextElement = document.getElementById(`subject-${nextSubject._id}`);
-          if (nextElement) {
-            nextElement.scrollIntoView({ 
-              behavior: 'smooth', 
-              block: 'start',
-              inline: 'nearest'
-            });
-          }
+          // Scroll to next subject with proper offset
+          setTimeout(() => {
+            const nextElement = document.getElementById(`subject-${nextSubject._id}`);
+            if (nextElement) {
+              const elementPosition = nextElement.getBoundingClientRect().top;
+              const offsetPosition = elementPosition + window.pageYOffset - 100; // 100px offset from top
+              
+              window.scrollTo({
+                top: offsetPosition,
+                behavior: 'smooth'
+              });
+            }
+          }, 100); // Small delay to let accordion open
         }, 300);
       }
     }
@@ -397,10 +400,10 @@ const StudentFeedbackSubmission = () => {
       await studentAPI.submitFeedback(submissionData);
       Swal.fire({
         icon: 'success',
-        title: 'Success!',
-        text: 'Feedback submitted successfully! Thank you for your valuable input.',
+        title: 'All done! 🎉',
+        text: 'Thanks for sharing your feedback. It helps us improve!',
         confirmButtonColor: '#8B5CF6',
-        timer: 3000
+        timer: 2500
       });
       showSubmittedCard();
       const periodSpecificId = `${formId}_${feedbackForm.currentPeriod._id}`;
@@ -411,9 +414,10 @@ const StudentFeedbackSubmission = () => {
       const serverMsg = error.response?.data?.message || error.message || 'Failed to submit feedback';
       Swal.fire({
         icon: 'error',
-        title: 'Submission Failed',
+        title: 'Oops! Something went wrong',
         text: serverMsg,
-        confirmButtonColor: '#8B5CF6'
+        confirmButtonColor: '#8B5CF6',
+        confirmButtonText: 'Try Again'
       });
     } finally {
       setSubmitting(false);
@@ -452,78 +456,77 @@ const StudentFeedbackSubmission = () => {
         return (
           <input
             type="text"
-            value={responseValue}
+            value={responseValue || ''}
             onChange={(e) => handleResponseChange(subjectId, questionIndex, e.target.value)}
-            className="input"
-            placeholder="Enter your answer"
+            className="w-full px-4 py-3 rounded-xl border-2 border-violet-200 focus:border-violet-400 focus:ring-4 focus:ring-violet-100 transition-all duration-200 text-gray-800 placeholder-gray-400 bg-white hover:border-violet-300"
+            placeholder="Type your response here..."
             required={question.isRequired}
           />
         );
       case 'textarea':
         return (
           <textarea
-            value={responseValue}
+            value={responseValue || ''}
             onChange={(e) => handleResponseChange(subjectId, questionIndex, e.target.value)}
-            className="input"
-            rows={4}
-            placeholder="Enter your answer"
+            className="w-full px-4 py-3 rounded-xl border-2 border-violet-200 focus:border-violet-400 focus:ring-4 focus:ring-violet-100 transition-all duration-200 text-gray-800 placeholder-gray-400 bg-white hover:border-violet-300 resize-none"
+            rows="4"
+            placeholder="Share your detailed thoughts here..."
             required={question.isRequired}
           />
         );
       case 'scale':
         return (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm text-gray-600">
-              <span>{question.scaleMin}</span>
-              <span>{question.scaleMax}</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {Array.from({ length: question.scaleMax - question.scaleMin + 1 }, (_, i) => {
-                const value = question.scaleMin + i;
-                return (
-                  <label key={i} className="flex items-center">
-                    <input
-                      type="radio"
-                      name={`${subjectId}-${questionIndex}`}
-                      value={value}
-                      checked={responseValue === value.toString()}
-                      onChange={(e) => handleResponseChange(subjectId, questionIndex, e.target.value)}
-                      className="mr-1"
-                      required={question.isRequired}
-                    />
-                    <span className="text-sm">{value}</span>
-                  </label>
-                );
-              })}
-            </div>
+          <div className="flex flex-wrap gap-2">
+            {[1, 2, 3, 4, 5].map((rating) => (
+              <button
+                key={rating}
+                type="button"
+                onClick={() => handleResponseChange(subjectId, questionIndex, rating)}
+                className={`min-w-[3rem] px-5 py-3 rounded-xl border-2 font-semibold transition-all duration-200 transform hover:scale-105 ${
+                  responseValue === rating
+                    ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white border-violet-600 shadow-lg shadow-violet-200'
+                    : 'bg-white text-gray-700 border-violet-200 hover:border-violet-400 hover:bg-violet-50'
+                }`}
+              >
+                {rating}
+              </button>
+            ))}
           </div>
         );
       case 'yesno':
         return (
-          <div className="flex space-x-4">
-            <label className="flex items-center">
+          <div className="flex gap-3">
+            <label className={`flex-1 flex items-center justify-center px-6 py-3 rounded-xl border-2 cursor-pointer transition-all duration-200 ${
+              responseValue === 'yes'
+                ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-400 text-green-700 shadow-md'
+                : 'bg-white border-violet-200 text-gray-700 hover:border-violet-400 hover:bg-violet-50'
+            }`}>
               <input
                 type="radio"
                 name={`${subjectId}-${questionIndex}`}
                 value="yes"
                 checked={responseValue === 'yes'}
                 onChange={(e) => handleResponseChange(subjectId, questionIndex, e.target.value)}
-                className="mr-2"
+                className="sr-only"
                 required={question.isRequired}
               />
-              <span>Yes</span>
+              <span className="font-medium">✓ Yes</span>
             </label>
-            <label className="flex items-center">
+            <label className={`flex-1 flex items-center justify-center px-6 py-3 rounded-xl border-2 cursor-pointer transition-all duration-200 ${
+              responseValue === 'no'
+                ? 'bg-gradient-to-r from-red-50 to-rose-50 border-red-400 text-red-700 shadow-md'
+                : 'bg-white border-violet-200 text-gray-700 hover:border-violet-400 hover:bg-violet-50'
+            }`}>
               <input
                 type="radio"
                 name={`${subjectId}-${questionIndex}`}
                 value="no"
                 checked={responseValue === 'no'}
                 onChange={(e) => handleResponseChange(subjectId, questionIndex, e.target.value)}
-                className="mr-2"
+                className="sr-only"
                 required={question.isRequired}
               />
-              <span>No</span>
+              <span className="font-medium">✗ No</span>
             </label>
           </div>
         );
@@ -531,17 +534,33 @@ const StudentFeedbackSubmission = () => {
         return (
           <div className="space-y-2">
             {question.options?.filter(option => option && option.trim()).map((option, optionIndex) => (
-              <label key={optionIndex} className="flex items-center">
+              <label 
+                key={optionIndex} 
+                className={`flex items-center px-4 py-3 rounded-xl border-2 cursor-pointer transition-all duration-200 ${
+                  responseValue === option
+                    ? 'bg-gradient-to-r from-violet-50 to-purple-50 border-violet-400 text-violet-700 shadow-md'
+                    : 'bg-white border-violet-200 text-gray-700 hover:border-violet-400 hover:bg-violet-50'
+                }`}
+              >
                 <input
                   type="radio"
                   name={`${subjectId}-${questionIndex}`}
                   value={option}
                   checked={responseValue === option}
                   onChange={(e) => handleResponseChange(subjectId, questionIndex, e.target.value)}
-                  className="mr-2"
+                  className="sr-only"
                   required={question.isRequired}
                 />
-                <span>{option}</span>
+                <div className={`w-5 h-5 rounded-full border-2 mr-3 flex items-center justify-center transition-all ${
+                  responseValue === option
+                    ? 'border-violet-600 bg-violet-600'
+                    : 'border-gray-300'
+                }`}>
+                  {responseValue === option && (
+                    <div className="w-2 h-2 bg-white rounded-full"></div>
+                  )}
+                </div>
+                <span className="font-medium">{option}</span>
               </label>
             ))}
           </div>
@@ -678,13 +697,13 @@ const StudentFeedbackSubmission = () => {
                 <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
                   {/* Step 1: Student Information */}
                   {currentStep === 1 && (
-                    <div className="bg-white rounded-xl shadow-lg p-6">
-                      <h2 className="text-xl font-bold text-gray-900 mb-6">Student Information</h2>
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                      <h2 className="text-lg font-semibold text-gray-900 mb-2">About You</h2>
+                      <p className="text-sm text-gray-600 mb-6">Just a few quick details to get started</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
-                          <label className="label flex items-center">
-                            <User className="h-4 w-4 mr-2 text-gray-500" />
-                            Full Name *
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Your Name *
                           </label>
                           <input
                             type="text"
@@ -695,11 +714,11 @@ const StudentFeedbackSubmission = () => {
                                 message: 'Please enter your full name with at least two words (e.g., Ashlesh Bathina)'
                               }
                             })}
-                            className={`input ${errors.studentName ? 'border-red-300 focus:ring-red-500' : ''}`}
+                            className={`w-full px-4 py-3 rounded-xl border-2 border-violet-200 focus:border-violet-400 focus:ring-4 focus:ring-violet-100 transition-all duration-200 text-gray-800 placeholder-gray-400 bg-white hover:border-violet-300 ${errors.studentName ? 'border-red-300 focus:ring-red-500' : ''}`}
                             onInput={(e) => {
                               e.target.value = e.target.value.toLowerCase().replace(/\b\w/g, char => char.toUpperCase());
                             }}
-                            placeholder="Enter your full name"
+                            placeholder="John Doe"
                           />
                           {errors.studentName && (
                             <p className="mt-1 text-sm text-red-600">{errors.studentName.message}</p>
@@ -707,21 +726,19 @@ const StudentFeedbackSubmission = () => {
                         </div>
 
                         <div>
-                          <label className="label flex items-center">
-                            <Phone className="h-4 w-4 mr-2 text-gray-500" />
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
                             Phone Number
                           </label>
                           <input
                             type="tel"
                             {...register('phoneNumber')}
-                            className="input"
-                            placeholder="Enter your phone number"
+                            className="w-full px-4 py-3 rounded-xl border-2 border-violet-200 focus:border-violet-400 focus:ring-4 focus:ring-violet-100 transition-all duration-200 text-gray-800 placeholder-gray-400 bg-white hover:border-violet-300"
+                            placeholder="1234567890"
                           />
                         </div>
 
                         <div className="md:col-span-2">
-                          <label className="label flex items-center">
-                            <Hash className="h-4 w-4 mr-2 text-gray-500" />
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
                             Roll Number *
                           </label>
                           <input
@@ -736,8 +753,8 @@ const StudentFeedbackSubmission = () => {
                             onInput={(e) => {
                               e.target.value = e.target.value.toUpperCase();
                             }}
-                            className={`input ${errors.rollNumber ? 'border-red-300 focus:ring-red-500' : ''}`}
-                            placeholder="Enter your roll number"
+                            className={`w-full px-4 py-3 rounded-xl border-2 border-violet-200 focus:border-violet-400 focus:ring-4 focus:ring-violet-100 transition-all duration-200 text-gray-800 placeholder-gray-400 bg-white hover:border-violet-300 ${errors.rollNumber ? 'border-red-300 focus:ring-red-500' : ''}`}
+                            placeholder="21B01A0501"
 
                           />
 
@@ -751,17 +768,17 @@ const StudentFeedbackSubmission = () => {
 
                   {/* Step 2: Course Selection */}
                   {currentStep === 2 && (
-                    <div className="bg-white rounded-xl shadow-lg p-6">
-                      <h2 className="text-xl font-bold text-gray-900 mb-6">Course Selection</h2>
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                      <h2 className="text-lg font-semibold text-gray-900 mb-2">Your Course</h2>
+                      <p className="text-sm text-gray-600 mb-6">Select your current course details</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
-                          <label className="label flex items-center">
-                            <GraduationCap className="h-4 w-4 mr-2 text-gray-500" />
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
                             Course *
                           </label>
                           <select
                             {...register('course', { required: 'Course selection is required' })}
-                            className={`input ${errors.course ? 'border-red-300 focus:ring-red-500' : ''}`}
+                            className={`w-full px-4 py-3 rounded-xl border-2 border-violet-200 focus:border-violet-400 focus:ring-4 focus:ring-violet-100 transition-all duration-200 text-gray-800 placeholder-gray-400 bg-white hover:border-violet-300 ${errors.course ? 'border-red-300 focus:ring-red-500' : ''}`}
                           >
                             <option value="">Select a course</option>
                             {courses.map((course) => (
@@ -776,13 +793,12 @@ const StudentFeedbackSubmission = () => {
                         </div>
 
                         <div>
-                          <label className="label flex items-center">
-                            <Calendar className="h-4 w-4 mr-2 text-gray-500" />
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
                             Year *
                           </label>
                           <select
                             {...register('year', { required: 'Year selection is required' })}
-                            className={`input ${errors.year ? 'border-red-300 focus:ring-red-500' : ''}`}
+                            className={`w-full px-4 py-3 rounded-xl border-2 border-violet-200 focus:border-violet-400 focus:ring-4 focus:ring-violet-100 transition-all duration-200 text-gray-800 placeholder-gray-400 bg-white hover:border-violet-300 ${errors.year ? 'border-red-300 focus:ring-red-500' : ''}`}
                           >
                             <option value="">Select year</option>
                             <option value={1}>Year 1</option>
@@ -796,13 +812,12 @@ const StudentFeedbackSubmission = () => {
                         </div>
 
                         <div>
-                          <label className="label flex items-center">
-                            <Calendar className="h-4 w-4 mr-2 text-gray-500" />
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
                             Semester *
                           </label>
                           <select
                             {...register('semester', { required: 'Semester selection is required' })}
-                            className={`input ${errors.semester ? 'border-red-300 focus:ring-red-500' : ''}`}
+                            className={`w-full px-4 py-3 rounded-xl border-2 border-violet-200 focus:border-violet-400 focus:ring-4 focus:ring-violet-100 transition-all duration-200 text-gray-800 placeholder-gray-400 bg-white hover:border-violet-300 ${errors.semester ? 'border-red-300 focus:ring-red-500' : ''}`}
                           >
                             <option value="">Select semester</option>
                             <option value={1}>Semester 1</option>
@@ -814,15 +829,14 @@ const StudentFeedbackSubmission = () => {
                         </div>
 
                         <div>
-                          <label className="label flex items-center">
-                            <BookOpen className="h-4 w-4 mr-2 text-gray-500" />
-                            Section {availableSections.length > 0 ? '*' : '(Optional)'}
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Section {availableSections.length > 0 ? '*' : ''}
                           </label>
                           <select
                             {...register('section', { 
                               required: availableSections.length > 0 ? 'Section selection is required' : false 
                             })}
-                            className={`input ${errors.section ? 'border-red-300 focus:ring-red-500' : ''}`}
+                            className={`w-full px-4 py-3 rounded-xl border-2 border-violet-200 focus:border-violet-400 focus:ring-4 focus:ring-violet-100 transition-all duration-200 text-gray-800 placeholder-gray-400 bg-white hover:border-violet-300 ${errors.section ? 'border-red-300 focus:ring-red-500' : ''}`}
                             disabled={!watchedYear || !watchedSemester || availableSections.length === 0}
                           >
                             <option value="">
@@ -850,7 +864,7 @@ const StudentFeedbackSubmission = () => {
 
                       {subjects.length > 0 && (
                         <div className="mt-6">
-                          <h3 className="text-lg font-medium text-gray-900 mb-4">Available Subjects</h3>
+                          <h3 className="text-base font-medium text-gray-900 mb-4">Your Subjects</h3>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {subjects.map((subject) => (
                               <div key={subject._id} className="bg-gray-50 rounded-lg p-4">
@@ -876,10 +890,10 @@ const StudentFeedbackSubmission = () => {
                   {/* Step 3: Feedback Forms with Accordion */}
                   {currentStep === 3 && (
                     <div className="space-y-6">
-                      <div className="bg-white rounded-xl shadow-lg p-6">
-                        <h2 className="text-xl font-bold text-gray-900 mb-6">Feedback Forms</h2>
-                        <p className="text-gray-600 mb-6">
-                          Please fill out the feedback form for each subject. Click on a subject to open its form.
+                      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                        <h2 className="text-lg font-semibold text-gray-900 mb-2">Rate Your Subjects</h2>
+                        <p className="text-sm text-gray-600">
+                          {subjects.length} {subjects.length === 1 ? 'subject' : 'subjects'} to review
                         </p>
                       </div>
 
@@ -887,21 +901,23 @@ const StudentFeedbackSubmission = () => {
                         <div 
                           key={subject._id} 
                           id={`subject-${subject._id}`}
-                          className="bg-white rounded-xl shadow-lg overflow-hidden scroll-mt-4"
+                          className="bg-white rounded-2xl shadow-sm border border-violet-100 overflow-hidden scroll-mt-24 transition-all duration-300 hover:shadow-md hover:border-violet-200"
                         >
                           {/* Header */}
                           <button
                             type="button"
                             onClick={() => setActiveSubject(prev => prev === subject._id ? null : subject._id)}
-                            className="w-full flex justify-between items-center p-4 text-left hover:bg-gray-50 focus:outline-none"
+                            className="w-full flex justify-between items-center p-5 text-left hover:bg-gradient-to-r hover:from-violet-50 hover:to-purple-50 focus:outline-none transition-all duration-200"
                           >
                             <div className="flex items-center flex-1">
-                              <BookOpen className="h-6 w-6 text-purple-600 mr-3" />
+                              <div className="p-2 bg-gradient-to-br from-violet-100 to-purple-100 rounded-xl mr-4">
+                                <BookOpen className="h-5 w-5 text-violet-600" />
+                              </div>
                               <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <h3 className="text-lg font-bold text-gray-900">{subject.subjectName}</h3>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="text-lg font-semibold bg-gradient-to-r from-violet-700 to-purple-700 bg-clip-text text-transparent">{subject.subjectName}</h3>
                                   {subject.isLab && (
-                                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">
+                                    <span className="text-xs bg-gradient-to-r from-blue-100 to-cyan-100 text-blue-700 px-2.5 py-1 rounded-full font-medium shadow-sm">
                                       🔬 Lab
                                     </span>
                                   )}
@@ -917,14 +933,14 @@ const StudentFeedbackSubmission = () => {
                                     
                                     if (isComplete) {
                                       return (
-                                        <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-medium flex items-center">
+                                        <span className="text-xs bg-gradient-to-r from-green-100 to-emerald-100 text-green-700 px-2.5 py-1 rounded-full font-medium flex items-center shadow-sm">
                                           <CheckCircle className="h-3 w-3 mr-1" />
                                           Complete
                                         </span>
                                       );
                                     } else if (answeredRequired > 0) {
                                       return (
-                                        <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded font-medium">
+                                        <span className="text-xs bg-gradient-to-r from-amber-100 to-orange-100 text-amber-700 px-2.5 py-1 rounded-full font-medium shadow-sm">
                                           {answeredRequired}/{requiredQuestions.length}
                                         </span>
                                       );
@@ -933,40 +949,48 @@ const StudentFeedbackSubmission = () => {
                                   })()}
                                 </div>
                                 {subject.faculty && (
-                                  <p className="text-sm text-gray-500">
-                                    Faculty: {typeof subject.faculty === 'object' ? subject.faculty.name : 'Loading...'}
+                                  <p className="text-sm text-gray-600 mt-1">
+                                    <span className="text-gray-400">Faculty:</span> {typeof subject.faculty === 'object' ? subject.faculty.name : 'Loading...'}
                                   </p>
                                 )}
                               </div>
                             </div>
-                            {activeSubject === subject._id ? (
-                              <ChevronUp className="h-5 w-5 text-gray-500 flex-shrink-0" />
-                            ) : (
-                              <ChevronDown className="h-5 w-5 text-gray-500 flex-shrink-0" />
-                            )}
+                            <div className={`p-2 rounded-lg transition-all duration-200 ${
+                              activeSubject === subject._id ? 'bg-violet-100' : 'bg-gray-100'
+                            }`}>
+                              {activeSubject === subject._id ? (
+                                <ChevronUp className="h-5 w-5 text-violet-600 flex-shrink-0" />
+                              ) : (
+                                <ChevronDown className="h-5 w-5 text-gray-500 flex-shrink-0" />
+                              )}
+                            </div>
                           </button>
 
                           {/* Body */}
                           {activeSubject === subject._id && (
-                            <div className="p-6 border-t space-y-6">
-                              {feedbackForm.questions?.map((question, questionIndex) => (
-                                <div key={questionIndex} className="border-l-4 border-royal-200 pl-4">
-                                  <div className="flex items-start space-x-3 mb-3">
-                                    <div className="flex-shrink-0 mt-1">
-                                      {getQuestionIcon(question.questionType)}
-                                    </div>
-                                    <div className="flex-1">
-                                      <label className="block text-sm font-medium text-gray-900 mb-2">
-                                        {question.questionText}
-                                        {question.isRequired && (
-                                          <span className="text-red-500 ml-1">*</span>
-                                        )}
-                                      </label>
-                                      {renderQuestion(question, questionIndex, subject._id)}
+                            <div className="p-6 bg-gradient-to-br from-violet-50/30 via-purple-50/30 to-white border-t border-violet-100">
+                              <div className="space-y-5">
+                                {feedbackForm.questions?.map((question, questionIndex) => (
+                                  <div key={questionIndex} className="bg-white rounded-xl p-5 shadow-sm border border-violet-100/50 hover:shadow-md transition-all duration-200">
+                                    <div className="flex items-start space-x-4">
+                                      <div className="flex-shrink-0 mt-0.5">
+                                        <div className="p-2 bg-gradient-to-br from-violet-100 to-purple-100 rounded-lg">
+                                          {getQuestionIcon(question.questionType)}
+                                        </div>
+                                      </div>
+                                      <div className="flex-1">
+                                        <label className="block text-base font-medium text-gray-800 mb-3">
+                                          {question.questionText}
+                                          {question.isRequired && (
+                                            <span className="text-red-500 ml-1.5 text-lg">*</span>
+                                          )}
+                                        </label>
+                                        {renderQuestion(question, questionIndex, subject._id)}
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
-                              ))}
+                                ))}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -975,33 +999,33 @@ const StudentFeedbackSubmission = () => {
                   )}
 
                   {/* Navigation Buttons */}
-                  <div className="flex flex-col sm:flex-row justify-between mt-8 gap-2 sm:gap-0">
+                  <div className="flex flex-col sm:flex-row justify-between mt-8 gap-3">
                     <button
                       type="button"
                       onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
                       disabled={currentStep === 1}
-                      className="inline-flex items-center px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm sm:text-base hover:bg-gray-50 transition disabled:opacity-50"
+                      className="inline-flex items-center justify-center px-5 py-2.5 rounded-lg border-2 border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <ArrowLeft className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
-                      Previous
+                      <ArrowLeft className="h-4 w-4 mr-2" />
+                      Back
                     </button>
 
                     <button
                       type="submit"
-                      className="inline-flex items-center px-4 sm:px-6 py-2 sm:py-2.5 rounded-lg bg-royal-600 text-white font-medium text-sm sm:text-base hover:bg-royal-700 transition disabled:opacity-50 justify-center"
+                      className="inline-flex items-center justify-center px-6 py-2.5 rounded-lg bg-gradient-to-r from-violet-600 to-purple-600 text-white font-medium hover:from-violet-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-violet-200"
                       disabled={submitting || (currentStep === 2 && subjects.length === 0)}
                     >
                       {submitting ? (
                         <>
-                          <Loader2 className="h-3 w-3 sm:h-4 mr-1 sm:mr-2 animate-spin" />
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                           Submitting...
                         </>
                       ) : currentStep === 3 ? (
-                        'Submit All Feedback'
+                        'Submit Feedback'
                       ) : (
                         <>
-                          Next
-                          <ArrowRight className="h-3 w-3 sm:h-4 ml-1 sm:ml-2" />
+                          Continue
+                          <ArrowRight className="h-4 w-4 ml-2" />
                         </>
                       )}
                     </button>

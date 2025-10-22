@@ -34,6 +34,12 @@ router.get('/export/csv', auth, responseController.exportToCSV);
 // Export comprehensive analytics to Excel (Year-wise worksheets)
 router.get('/export/comprehensive', auth, responseController.exportComprehensiveAnalytics);
 
+// Get analytics in table format (same structure as Excel)
+router.get('/analytics/table-view', auth, responseController.getAnalyticsTableView);
+
+// Compare subject across multiple periods
+router.get('/analytics/compare-periods', auth, responseController.compareSubjectPeriods);
+
 // Delete response (admin only)
 router.delete('/:id', auth, responseController.deleteResponse);
 
